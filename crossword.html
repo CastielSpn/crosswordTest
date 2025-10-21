@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Генератор мини-кроссворда</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .controls { margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 5px; }
+        .controls input, .controls button { margin: 5px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        .controls button { background: #007bff; color: white; cursor: pointer; }
+        .controls button:hover { background: #0056b3; }
+        .crossword { display: inline-block; border: 2px solid #333; margin: 20px 0; }
+        .crossword-row { display: flex; }
+        .crossword-cell { width: 30px; height: 30px; border: 1px solid #ccc; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; }
+        .crossword-cell.black { background-color: #000; }
+        .crossword-cell.white { background-color: #fff; }
+        .console-output { background: #000; color: #0f0; padding: 15px; border-radius: 5px; font-family: 'Courier New', monospace; white-space: pre-wrap; margin-top: 20px; max-height: 300px; overflow-y: auto; }
+        .error { color: #ff0000; background: #ffe6e6; padding: 10px; border-radius: 5px; margin: 10px 0; }
+        .success { color: #008000; background: #e6ffe6; padding: 10px; border-radius: 5px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Генератор мини-кроссворда</h1>
+        <div class="controls">
+            <label>Ширина: <input type="number" id="width" value="6" min="3" max="10"></label>
+            <label>Высота: <input type="number" id="height" value="6" min="3" max="10"></label>
+            <br>
+            <label>Черные клетки (формат: "x,y;x,y"): <input type="text" id="blackcells" placeholder="1,1;2,3;4,5" style="width: 300px;"></label>
+            <br>
+            <button onclick="generateCrossword()">Сгенерировать кроссворд</button>
+            <button onclick="clearOutput()">Очистить</button>
+        </div>
+        <div id="crossword-container"></div>
+        <div id="messages"></div>
+        <div id="console-output" class="console-output"></div>
+    </div>
+    <script>
+        let words = [];
+        let crossword = [];
+        let width = 6;
+        let height = 6;
+        let blackCells = [];
+
+        async function loadWords() {
+            try {
+                const response = await fetch('words.txt');
+                const text = await response.text();
+                words = text.split('\n').map(word => word.trim().toLowerCase()).filter(word => word.length > 0);
+                console.log(`Загружено ${words.length} слов`);
+            } catch (error) {
+                console.error('Ошибка загрузки слов:', error);
+                showMessage('Ошибка загрузки файла words.txt. Убедитесь, что запущен сервер (node server.js)', 'error');
+            }
+        }
+
+        function parseBlackCells(blackCellsStr) {
+            if (!blackCellsStr.trim()) return [];
+            const cells = [];
+            const pairs = blackCellsStr.split(';');
+            for (const pair of pairs) {
+                const [x, y] = pair.split(',').map(num => parseInt(num.trim()));
+                if (!isNaN(x) && !isNaN(y)) {
+                    cells.push({x, y});
+                }
+            }
+            return cells;
+        }
+
+        function initializeCrossword(w, h, blackCells) {
+            const grid = [];
+            for (let y = 0; y < h; y++) {
+                grid[y] = [];
+                for (let x = 0; x < w; x++) {
+                    const isBlack = blackCells.some(cell => cell.x === x && cell.y === y);
+                    grid[y][x] = { letter: '', isBlack: isBlack, isHorizontal: false, isVertical: false };
+                }
+            }
+            return grid;
+        }
+
+        function getWordsByLength(length) {
+            return words.filter(word => word.length === length);
+        }
+
+        function canPlaceWord(grid, word, startX, startY, direction) {
+            const dx = direction === 'horizontal' ? 1 : 0;
+            const dy = direction === 'vertical' ? 1 : 0;
+            for (let i = 0; i < word.length; i++) {
+                const x = startX + i * dx;
+                const y = startY + i * dy;
+                if (x >= width || y >= height) return false;
+                if (grid[y][x].isBlack) return false;
+                if (grid[y][x].letter && grid[y][x].letter !== word[i]) return false;
+            }
+            return true;
+        }
+
+        function placeWord(grid, word, startX, startY, direction) {
+            const dx = direction === 'horizontal' ? 1 : 0;
+            const dy = direction === 'vertical' ? 1 : 0;
+            for (let i = 0; i < word.length; i++) {
+                const x = startX + i * dx;
+                const y = startY + i * dy;
+                grid[y][x].letter = word[i];
+                if (direction === 'horizontal') {
+                    grid[y][x].isHorizontal = true;
+                } else {
+                    grid[y][x].isVertical = true;
+                }
+            }
+        }
+
+        function getPossiblePositions(grid, word, direction) {
+            const positions = [];
+            const maxX = direction === 'horizontal' ? width - word.length : width - 1;
+            const maxY = direction === 'vertical' ? height - word.length : height - 1;
+            for (let y = 0; y <= maxY; y++) {
+                for (let x = 0; x <= maxX; x++) {
+                    if (canPlaceWord(grid, word, x, y, direction)) {
+                        positions.push({x, y});
+                    }
+                }
+            }
+            return positions;
+        }
+
+        function validateVerticalWords(grid) {
+            for (let x = 0; x < width; x++) {
+                let word = '';
+                let startY = -1;
+                for (let y = 0; y < height; y++) {
+                    if (!grid[y][x].isBlack) {
+                        if (startY === -1) startY = y;
+                        word += grid[y][x].letter;
+                    } else {
+                        if (word.length > 1) {
+                            if (!words.includes(word.toLowerCase())) {
+                                return false;
+                            }
+                        }
+                        word = '';
+                        startY = -1;
+                    }
+                }
+                if (word.length > 1) {
+                    if (!words.includes(word.toLowerCase())) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        function generateCrosswordGrid(w, h, blackCells) {
+            const grid = initializeCrossword(w, h, blackCells);
+            const wordLengths = [3, 4, 5, 6];
+            let attempts = 0;
+            const maxAttempts = 1000;
+            while (attempts < maxAttempts) {
+                attempts++;
+                for (let y = 0; y < h; y++) {
+                    for (let x = 0; x < w; x++) {
+                        if (!grid[y][x].isBlack) {
+                            grid[y][x].letter = '';
+                            grid[y][x].isHorizontal = false;
+                            grid[y][x].isVertical = false;
+                        }
+                    }
+                }
+                let placedWords = 0;
+                const maxWords = Math.min(8, Math.floor((w * h - blackCells.length) / 3));
+                for (let i = 0; i < maxWords && placedWords < 5; i++) {
+                    const length = wordLengths[Math.floor(Math.random() * wordLengths.length)];
+                    const availableWords = getWordsByLength(length);
+                    if (availableWords.length === 0) continue;
+                    const word = availableWords[Math.floor(Math.random() * availableWords.length)];
+                    const direction = Math.random() < 0.5 ? 'horizontal' : 'vertical';
+                    const positions = getPossiblePositions(grid, word, direction);
+                    if (positions.length > 0) {
+                        const pos = positions[Math.floor(Math.random() * positions.length)];
+                        placeWord(grid, word, pos.x, pos.y, direction);
+                        placedWords++;
+                    }
+                }
+                if (validateVerticalWords(grid)) {
+                    return grid;
+                }
+            }
+            return grid;
+        }
+
+        function displayCrossword(grid) {
+            const container = document.getElementById('crossword-container');
+            container.innerHTML = '';
+            const crosswordDiv = document.createElement('div');
+            crosswordDiv.className = 'crossword';
+            for (let y = 0; y < height; y++) {
+                const row = document.createElement('div');
+                row.className = 'crossword-row';
+                for (let x = 0; x < width; x++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'crossword-cell';
+                    if (grid[y][x].isBlack) {
+                        cell.classList.add('black');
+                    } else {
+                        cell.classList.add('white');
+                        cell.textContent = grid[y][x].letter.toUpperCase();
+                    }
+                    row.appendChild(cell);
+                }
+                crosswordDiv.appendChild(row);
+            }
+            container.appendChild(crosswordDiv);
+        }
+
+        function printCrosswordToConsole(grid) {
+            let output = `Кроссворд ${width}x${height}:\n\n`;
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    if (grid[y][x].isBlack) {
+                        output += '█';
+                    } else if (grid[y][x].letter) {
+                        output += grid[y][x].letter.toUpperCase();
+                    } else {
+                        output += '·';
+                    }
+                    output += ' ';
+                }
+                output += '\n';
+            }
+            output += '\nЧерные клетки: ';
+            if (blackCells.length > 0) {
+                output += blackCells.map(cell => `(${cell.x},${cell.y})`).join(', ');
+            } else {
+                output += 'нет';
+            }
+            output += '\n\nСлова в кроссворде:\n';
+            for (let y = 0; y < height; y++) {
+                let word = '';
+                for (let x = 0; x < width; x++) {
+                    if (!grid[y][x].isBlack) {
+                        word += grid[y][x].letter;
+                    } else {
+                        if (word.length > 1) {
+                            output += `Горизонтально: ${word.toUpperCase()}\n`;
+                        }
+                        word = '';
+                    }
+                }
+                if (word.length > 1) {
+                    output += `Горизонтально: ${word.toUpperCase()}\n`;
+                }
+            }
+            for (let x = 0; x < width; x++) {
+                let word = '';
+                for (let y = 0; y < height; y++) {
+                    if (!grid[y][x].isBlack) {
+                        word += grid[y][x].letter;
+                    } else {
+                        if (word.length > 1) {
+                            output += `Вертикально: ${word.toUpperCase()}\n`;
+                        }
+                        word = '';
+                    }
+                }
+                if (word.length > 1) {
+                    output += `Вертикально: ${word.toUpperCase()}\n`;
+                }
+            }
+            const consoleOutput = document.getElementById('console-output');
+            consoleOutput.textContent = output;
+            console.log(output);
+        }
+
+        function showMessage(message, type = 'info') {
+            const messagesDiv = document.getElementById('messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = type;
+            messageDiv.textContent = message;
+            messagesDiv.appendChild(messageDiv);
+            setTimeout(() => { messageDiv.remove(); }, 5000);
+        }
+
+        function clearOutput() {
+            document.getElementById('crossword-container').innerHTML = '';
+            document.getElementById('messages').innerHTML = '';
+            document.getElementById('console-output').textContent = '';
+        }
+
+        async function generateCrossword() {
+            if (words.length === 0) {
+                showMessage('Слова не загружены. Попробуйте еще раз.', 'error');
+                return;
+            }
+            width = parseInt(document.getElementById('width').value);
+            height = parseInt(document.getElementById('height').value);
+            const blackCellsStr = document.getElementById('blackcells').value;
+            if (width < 3 || height < 3) {
+                showMessage('Размеры должны быть не менее 3x3', 'error');
+                return;
+            }
+            blackCells = parseBlackCells(blackCellsStr);
+            showMessage('Генерируем кроссворд...', 'info');
+            try {
+                const grid = generateCrosswordGrid(width, height, blackCells);
+                displayCrossword(grid);
+                printCrosswordToConsole(grid);
+                showMessage('Кроссворд успешно сгенерирован!', 'success');
+            } catch (error) {
+                showMessage('Ошибка при генерации кроссворда: ' + error.message, 'error');
+                console.error(error);
+            }
+        }
+
+        window.addEventListener('load', loadWords);
+    </script>
+</body>
+</html>
