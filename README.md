@@ -1,6 +1,7 @@
 # Генератор мини-кроссворда
 
 Генератор кроссвордов с настраиваемыми размерами и черными клетками.
+![screenshot1]https://github.com/CastielSpn/crosswordTest/blob/main/image.png
 
 ## Файлы
 
@@ -54,3 +55,4 @@ node test-crossword.js
 
 - Node.js
 - Файл words.txt в той же директории
+
